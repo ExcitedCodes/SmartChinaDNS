@@ -260,6 +260,7 @@ async function AddIPSet(host,ip,setname,check = false){
     if(check == true){
         // 执行 HTTP(S) RST检测
         console.log(`Performing HTTP(S) RST Check for ${host} on ${ip}`);
+        timeStart = new Date().getTime();
         if(await utils.RSTCheck(host,ip)){
             execFile('/usr/sbin/ipset',['add',setname,ip],(err) => {
                 if(err){
@@ -268,6 +269,8 @@ async function AddIPSet(host,ip,setname,check = false){
                     console.log(`${ip} was added to the set ${setname}`)
                 }
             })
+        }else{
+            console.log(`RST Check passed (responsed in ${(new Date().getTime() - timeStart)}ms)`);
         }
     }else{
         execFile('/usr/sbin/ipset',['add',setname,ip],(err) => {

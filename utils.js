@@ -1,4 +1,5 @@
 const https = require("https");
+const http = require("http");
 const agent = new https.Agent({keepAlive: true});
 const dns = require("dns2");
 const base64url = require("base64url");
@@ -51,7 +52,7 @@ const DoHRequest = (hostname,port,path,timeout,packet) => new Promise((resolve,r
         method: "GET",
         headers:{
             "accept": "application/dns-message",
-            "User-Agent":  "SmartChinaDNS",
+            "User-Agent": "SmartChinaDNS",
             "Connection": "Keep-Alive"
         },
         agent: agent,
@@ -183,8 +184,42 @@ const DNSRequest = (dnsobject,packet) => new Promise((resolve,reject) => {
 
 
 const RSTCheck = (host,ip) => new Promise((resolve,reject) => {
-    //todo here
-    resolve(true);
+    let req1 = https.request({
+        hostname: ip,
+        port: 443,
+        method: "GET",
+        headers:{
+            "User-Agent": "SmartChinaDNS",
+            "Host": host
+        },
+        setHost: false,
+        timeout:10000
+    });
+    let req2 = http.request({
+        hostname: ip,
+        port: 80,
+        method: "GET",
+        headers:{
+            "User-Agent": "SmartChinaDNS",
+            "Host": host
+        },
+        setHost: false,
+        timeout:10000
+    });
+    req1.on('error',(err)=>{
+        resolve(err.code == "ECONNRESET");
+    })
+    req2.on('error',(err)=>{
+        resolve(err.code == "ECONNRESET");
+    })
+    req1.on('response',()=>{
+        resolve(false);
+    })
+    req2.on('response',()=>{
+        resolve(false);
+    })
+    req1.end();
+    req2.end();
 });
 
 
