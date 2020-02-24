@@ -84,8 +84,14 @@ async function handleQuery(request,send,rinfo){
         utils.GenerateLog(utils.emptyPacket(request),rinfo);
         return;
     }
+    
     for(q of request.questions){
         console.log(`Query[${utils.getKeyByValue(dns.Packet.TYPE,q.type)}] ${q.name} from ${rinfo.address}`);
+    }
+    if(request.questions[0].type == dns.Packet.TYPE.PTR){
+        send(utils.emptyPacket(request));
+        utils.GenerateLog(utils.emptyPacket(request),rinfo);
+        return;
     }
     // 虽然上面for了，但是其实我搜索了一下没有人会在一个DNS包里带俩questions
     // 所以直接取第一个进行判断黑白名单
