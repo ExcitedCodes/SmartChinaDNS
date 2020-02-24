@@ -12,11 +12,11 @@ SmartChinaDNS 将 GFWList 和 CHNRoute 的优点融合起来，为你提供正�
 
 ### 配置
 
-默认开箱即用
+默认开箱即用，需要 Node.js ≥ 12
 
 ```
 npm install
-npm run
+node index
 ```
 
 就可以了
