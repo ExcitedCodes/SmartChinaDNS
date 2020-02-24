@@ -257,7 +257,7 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
 }
 
 async function AddIPSet(host,ip,setname,check = false){
-    if(check == true){
+    if(check == true && config.AutoDetectRST == true){
         // 执行 HTTP(S) RST检测
         console.log(`Performing HTTP(S) RST Check for ${host} on ${ip}`);
         timeStart = new Date().getTime();
@@ -270,7 +270,7 @@ async function AddIPSet(host,ip,setname,check = false){
                 }
             })
         }else{
-            console.log(`RST Check passed (responsed in ${(new Date().getTime() - timeStart)}ms)`);
+            console.log(`${host} on ${ip} RST Check passed (responsed in ${(new Date().getTime() - timeStart)}ms)`);
         }
     }else{
         execFile('/usr/sbin/ipset',['add',setname,ip],(err) => {
