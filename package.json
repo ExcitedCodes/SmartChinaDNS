@@ -1,0 +1,21 @@
+{
+  "name": "smartchinadns",
+  "version": "1.0.0",
+  "description": "Get true DNS answers in a smarter way",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "dns",
+    "chinadns",
+    "gfw"
+  ],
+  "author": "ExcitedCodes",
+  "license": "MIT",
+  "dependencies": {
+    "base64url": "^3.0.1",
+    "cidr-matcher": "^2.1.1",
+    "dns2": "^1.3.1"
+  }
+}
