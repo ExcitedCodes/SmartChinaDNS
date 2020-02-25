@@ -229,7 +229,7 @@ function getKeyByValue(object, value){
 
 class DomainMatcher {
     constructor(){
-        this.DomainList = [];
+        this.DomainList = {};
     }
     LoadFromFile = (filepath) => new Promise((resolve,reject) => {
         try{
@@ -241,7 +241,21 @@ class DomainMatcher {
             let LineCounter = 0;
             rl.on('line',(line) => {
                 if(line.indexOf('#') !== 0){
-                    this.DomainList.push(line);
+                    line = line.toLowerCase().split('.');
+                    let root = this.DomainList;
+                    for(let i = line.length - 1; i >= 0; i--)
+                    {
+                        if(root[line[i]] === undefined)
+                        {
+                            root[line[i]] = i == 0 ? true : {};
+                        }
+                        root = root[line[i]];
+                        if(root === true && i != 0)
+                        {
+                            // Already contained in a wider rule
+                            return;
+                        }
+                    }
                 }
             });
             rl.on('close',() => {
@@ -252,11 +266,20 @@ class DomainMatcher {
             resolve();
         }
     });
-    contains(Domain){
-        Domain = Domain.toLowerCase();
-        for(let m of this.DomainList){
-            var i = Domain.lastIndexOf(m)
-            if(i == 0 || Domain[i - 1] == ".") return true;
+    contains(domain){
+        let root = this.DomainList;
+        domain = domain.toLowerCase().split('.');
+        for(let i = domain.length - 1; i >= 0; i--)
+        {
+            root = root[domain[i]];
+            if(root === true)
+            {
+                return true;
+            }
+            if(!root)
+            {
+                return false;
+            }
         }
         return false;
     }
