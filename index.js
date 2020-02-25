@@ -41,7 +41,7 @@ function TrustQuery(packet){
         return utils.DoHRequest(url.parse(config.TrustDNS.URL).hostname,
             url.parse(config.TrustDNS.URL).port ? url.parse(config.TrustDNS.URL).port : 443,
             url.parse(config.TrustDNS.URL).path,
-            config.TrustDNS.Timeout,
+            config.Timeout,
             packet).catch((reason) => {
                 console.error(`DoH Error occurred: ${reason}`)
                 return utils.emptyPacket(packet);
@@ -60,7 +60,7 @@ function ChinaQuery(packet){
         return utils.DoHRequest(url.parse(config.ChinaDNS.URL).hostname,
             url.parse(config.ChinaDNS.URL).port ? url.parse(config.ChinaDNS.URL).port : 443,
             url.parse(config.ChinaDNS.URL).path,
-            config.ChinaDNS.Timeout,
+            config.Timeout,
             packet).catch((reason) => {
                 console.error(`DoH Error occurred: ${reason}`)
                 return utils.emptyPacket(packet);
@@ -126,6 +126,24 @@ async function handleQuery(request,send,rinfo){
         ChinaAnswer = dns.Packet.parse(answer.toBuffer());
         JudgeResult(TrustAnswer,ChinaAnswer,2,send,rinfo);
     });
+    setTimeout(() => {
+        if(typeof ChinaAnswer == "undefined" && typeof TrustAnswer == "undefined"){
+            send(utils.emptyPacket(request));
+            console.log("Timeout exceeded, but none of the DNS Servers answered");
+            utils.GenerateLog(utils.emptyPacket(request),rinfo);
+            return;
+        }
+        if(typeof ChinaAnswer == "undefined"){
+            ChinaAnswer = utils.emptyPacket(request);
+            console.log("Timeout exceeded, giving up ChinaDNS");
+            JudgeResult(TrustAnswer,ChinaAnswer,1,send,rinfo);
+        }
+        if(typeof TrustAnswer == "undefined"){
+            TrustAnswer = utils.emptyPacket(request);
+            console.log("Timeout exceeded, giving up TrustDNS");
+            JudgeResult(TrustAnswer,ChinaAnswer,2,send,rinfo);
+        }
+    },config.Timeout)
     //接下来的逻辑在JudgeResult，它会负责发Response
 };
 
@@ -242,19 +260,25 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
             // 使用可信DNS结果，没有则等待
             if(typeof TrustAnswer != "undefined"){
                 // 可信DNS已经做出了判断
-                send(TrustAnswer);
-                utils.GenerateLog(TrustAnswer,rinfo,"(TrustDNS)");
-                // 检测两个DNS的结果是否一致，不一致则为被污染
-                let same = false;
-                for(c of TrustAnswer.answers){
-                    if(c.type == dns.Packet.TYPE.A && AnswerIP.includes(c.address)){
-                        same = true;
+                if(TrustAnswer.answers.length != 0){
+                    send(TrustAnswer);
+                    utils.GenerateLog(TrustAnswer,rinfo,"(TrustDNS)");
+                    // 检测两个DNS的结果是否一致，不一致则为被污染
+                    let same = false;
+                    for(c of TrustAnswer.answers){
+                        if(c.type == dns.Packet.TYPE.A && AnswerIP.includes(c.address)){
+                            same = true;
+                        }
                     }
-                }
-                for(q of AnswerIP){
-                    // 被污染时 same = false 则直接添加
-                    // 未被污染时 same = true 进行RST检测
-                    AddIPSet(TrustAnswer.questions[0].name,q,config.IpsetToAdd,same);
+                    for(q of AnswerIP){
+                        // 被污染时 same = false 则直接添加
+                        // 未被污染时 same = true 进行RST检测
+                        AddIPSet(TrustAnswer.questions[0].name,q,config.IpsetToAdd,same);
+                    }
+                }else{
+                    // 可信DNS返回空，中国DNS有结果
+                    send(ChinaAnswer);
+                    utils.GenerateLog(TrustAnswer,rinfo,"(ChinaDNS)");
                 }
                 break;
             }
