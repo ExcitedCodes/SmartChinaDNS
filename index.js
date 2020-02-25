@@ -1,117 +1,122 @@
 const dns = require("dns2");
+const url = require("url");
+const utils = require("./utils");
+const { execFile } = require('child_process');
+const CIDRMatcher = require('cidr-matcher');
+
+var CDNIPRange, CHNRoute, BlackList, WhiteList;
+
 let config;
 try {
     config = require("./config");
-}
-catch
-{
+} catch {
     console.error('未找到配置文件或配置有误, 请参考 config.js.example 创建一个可用的配置文件');
     return;
 }
-const url = require("url");
-const utils = require("./utils")
-const nodetrustdns = require('dns');
-const nodechinadns = require('dns');
-const { execFile } = require('child_process');
-const CIDRMatcher = require('cidr-matcher');
-var CDNIPRange,CHNRoute,BlackList,WhiteList;
 
-async function init(){
-    timeStart = new Date().getTime();
+/**
+ * 加载 DNS 服务器或对 DOH URL 进行预处理
+ * 
+ * 此函数将创建 config.DNS = require('dns')
+ * 
+ * @param {*} config 服务器配置对象
+ */
+function loadServer(config) {
+    if (config.Type == "dns") {
+        config.DNS = require('dns');
+        config.DNS.setServers([config.Addr]);
+    } else {
+        config.URL += config.URL.lastIndexOf('?') === -1 ? '?' : '&';
+    }
+}
+
+async function init() {
+    const timeStart = new Date().getTime();
+
     console.log("Loading CDN IP Range...");
     CDNIPRange = new CIDRMatcher(await utils.LoadIP(config.CDNIPRange));
+
     console.log("Loading China Route...");
     CHNRoute = new CIDRMatcher(await utils.LoadIP(config.CHNRoute));
+
     console.log("Loading Black List...");
     BlackList = new utils.DomainMatcher();
     await BlackList.LoadFromFile(config.BlackList);
+
     console.log("Loading White List...");
     WhiteList = new utils.DomainMatcher();
     await WhiteList.LoadFromFile(config.WhiteList);
-    if(config.TrustDNS.Type == "dns"){
-        nodetrustdns.setServers([config.TrustDNS.Addr]);
-    }
-    if(config.ChinaDNS.Type == "dns"){
-        nodechinadns.setServers([config.ChinaDNS.Addr]);
-    }
-    console.log(`Configuration loaded, ${(new Date().getTime() - timeStart)}ms used`)
-    const server = dns.createServer(handleQuery).listen({
-        address: url.parse(config.Listen).hostname,
+
+    loadServer(config.TrustDNS);
+    loadServer(config.ChinaDNS);
+
+    console.log(`Configuration loaded in ${(new Date().getTime() - timeStart)}ms`);
+
+    dns.createServer(handleQuery).listen({
         port: url.parse(config.Listen).port,
+        address: url.parse(config.Listen).hostname,
         exclusive: config.Exclusive
     }, () => {
         console.log("SmartChinaDNS is ready on " + config.Listen);
     });
 }
 
-function TrustQuery(packet){
-    if(config.TrustDNS.Type == "doh"){
-        return utils.DoHRequest(url.parse(config.TrustDNS.URL).hostname,
-            url.parse(config.TrustDNS.URL).port ? url.parse(config.TrustDNS.URL).port : 443,
-            url.parse(config.TrustDNS.URL).path,
-            config.Timeout,
-            packet).catch((reason) => {
-                console.error(`DoH Error occurred: ${reason}`)
+function performQuery(config, timeout, packet) {
+    if (config.Type == 'dns') {
+        return utils.DNSRequest(config.DNS, packet)
+            .catch((reason) => {
+                console.error(`DNS Error occurred: ${reason}`);
                 return utils.emptyPacket(packet);
             });
-
-    }else if(config.TrustDNS.Type == "dns"){
-        return utils.DNSRequest(nodetrustdns,packet).catch((reason) => {
-            console.error(`DNS Error occurred: ${reason}`)
-            return utils.emptyPacket(packet);
-        });
+    } else {
+        return utils.DoHRequest(config.URL, timeout, packet)
+            .catch((reason) => {
+                console.error(`DoH Error occurred: ${reason}`);
+                return utils.emptyPacket(packet);
+            });
     }
 }
 
-function ChinaQuery(packet){
-    if(config.ChinaDNS.Type == "doh"){
-        return utils.DoHRequest(url.parse(config.ChinaDNS.URL).hostname,
-            url.parse(config.ChinaDNS.URL).port ? url.parse(config.ChinaDNS.URL).port : 443,
-            url.parse(config.ChinaDNS.URL).path,
-            config.Timeout,
-            packet).catch((reason) => {
-                console.error(`DoH Error occurred: ${reason}`)
-                return utils.emptyPacket(packet);
-            });
-
-    }else if(config.ChinaDNS.Type == "dns"){
-        return utils.DNSRequest(nodetrustdns,packet).catch((reason) => {
-            console.error(`DNS Error occurred: ${reason}`)
-            return utils.emptyPacket(packet);
-        });
-    }
-}
-
-
+/**
+ * 处理监听的 DNS 服务器收到的查询请求
+ * @param {*} request DNS request packet
+ * @param {*} send 
+ * @param {*} rinfo Remote info
+ */
 async function handleQuery(request,send,rinfo){
     rinfo.timeStart = new Date().getTime();
+
+    // Discard all unsupported stuffs
     request.header.arcount = 0;
-    request.additionals=[];
-    if(request.questions.length == 0){
+    request.additionals = [];
+
+    if (request.questions.length == 0) {
         send(utils.emptyPacket(request));
-        utils.GenerateLog(utils.emptyPacket(request),rinfo);
+        utils.GenerateLog(request, rinfo);
         return;
     }
     
-    for(q of request.questions){
+    for(q of request.questions) {
         console.log(`Query[${utils.getKeyByValue(dns.Packet.TYPE,q.type)}] ${q.name} from ${rinfo.address}`);
     }
+    
     if(request.questions[0].type == dns.Packet.TYPE.PTR){
         send(utils.emptyPacket(request));
-        utils.GenerateLog(utils.emptyPacket(request),rinfo);
+        utils.GenerateLog(request,rinfo);
         return;
     }
+
     // 虽然上面for了，但是其实我搜索了一下没有人会在一个DNS包里带俩questions
     // 所以直接取第一个进行判断黑白名单
-    if(BlackList.contains(request.questions[0].name)){
+    if(BlackList.contains(request.questions[0].name)) {
         // 在黑名单中
         console.log(`${request.questions[0].name} match BlackList, forwarding to TrustDNS`);
-        let TrustAnswer = await TrustQuery(request);
+        const TrustAnswer = await performQuery(config.TrustDNS,config.Timeout,request);
         send(TrustAnswer);
         utils.GenerateLog(TrustAnswer,rinfo,"(TrustDNS)");
         for(q of TrustAnswer.answers){
             if(q.type == dns.Packet.TYPE.A){
-                AddIPSet(TrustAnswer.questions[0].name,q.address,config.IpsetToAdd);
+                AddIPSet(q.address,TrustAnswer.questions[0].name);
             }
         }
         return;
@@ -119,39 +124,41 @@ async function handleQuery(request,send,rinfo){
     if(WhiteList.contains(request.questions[0].name)){
         // 在白名单中
         console.log(`${request.questions[0].name} match WhiteList, forwarding to ChinaDNS`);
-        let ChinaAnswer = await ChinaQuery(request);
+        const ChinaAnswer = await performQuery(config.ChinaDNS,config.Timeout,request);
         send(ChinaAnswer);
         utils.GenerateLog(ChinaAnswer,rinfo,"(ChinaDNS)");
         return;
     }
+
     // 未判定域名
     var TrustAnswer, ChinaAnswer;
-    TrustQuery(request).then((answer) => {
+    performQuery(config.TrustDNS,config.Timeout,request).then((answer) => {
         TrustAnswer = dns.Packet.parse(answer.toBuffer());
         JudgeResult(TrustAnswer,ChinaAnswer,1,send,rinfo);
     });
-    ChinaQuery(request).then((answer) => {
+    performQuery(config.ChinaDNS,config.Timeout,request).then((answer) => {
         ChinaAnswer = dns.Packet.parse(answer.toBuffer());
         JudgeResult(TrustAnswer,ChinaAnswer,2,send,rinfo);
     });
     setTimeout(() => {
+        request = utils.emptyPacket(request);
         if(typeof ChinaAnswer == "undefined" && typeof TrustAnswer == "undefined"){
-            send(utils.emptyPacket(request));
+            send(request);
             console.log("Timeout exceeded, but none of the DNS Servers answered");
-            utils.GenerateLog(utils.emptyPacket(request),rinfo);
+            utils.GenerateLog(request,rinfo);
             return;
         }
         if(typeof ChinaAnswer == "undefined"){
-            ChinaAnswer = utils.emptyPacket(request);
+            ChinaAnswer = request;
             console.log("Timeout exceeded, giving up ChinaDNS");
             JudgeResult(TrustAnswer,ChinaAnswer,1,send,rinfo);
         }
         if(typeof TrustAnswer == "undefined"){
-            TrustAnswer = utils.emptyPacket(request);
+            TrustAnswer = request;
             console.log("Timeout exceeded, giving up TrustDNS");
             JudgeResult(TrustAnswer,ChinaAnswer,2,send,rinfo);
         }
-    },config.Timeout)
+    }, config.Timeout)
     //接下来的逻辑在JudgeResult，它会负责发Response
 };
 
@@ -199,7 +206,7 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
                 send(TrustAnswer);
                 utils.GenerateLog(TrustAnswer,rinfo,"(TrustDNS)");
                 for(q of AnswerIP){
-                    AddIPSet(TrustAnswer.questions[0].name,q,config.IpsetToAdd,true);
+                    AddIPSet(q,TrustAnswer.questions[0].name,true);
                 }
                 break;
             }
@@ -215,7 +222,7 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
                     }
                 }
                 for(q of AnswerIP){
-                    AddIPSet(TrustAnswer.questions[0].name,q,config.IpsetToAdd,same);
+                    AddIPSet(q,TrustAnswer.questions[0].name,same);
                 }
                 break;
             }
@@ -260,7 +267,7 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
                 send(ChinaAnswer);
                 utils.GenerateLog(ChinaAnswer,rinfo,"(ChinaDNS)");
                 for(q of AnswerIP){
-                    AddIPSet(ChinaAnswer.questions[0].name,q,config.IpsetToAdd,true);
+                    AddIPSet(q,ChinaAnswer.questions[0].name,true);
                 }
                 break;
             }
@@ -281,7 +288,7 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
                     for(q of AnswerIP){
                         // 被污染时 same = false 则直接添加
                         // 未被污染时 same = true 进行RST检测
-                        AddIPSet(TrustAnswer.questions[0].name,q,config.IpsetToAdd,same);
+                        AddIPSet(q,TrustAnswer.questions[0].name,same);
                     }
                 }else{
                     // 可信DNS返回空，中国DNS有结果
@@ -294,32 +301,32 @@ function JudgeResult(TrustAnswer,ChinaAnswer,WhoAMI,send,rinfo){
     }
 }
 
-async function AddIPSet(host,ip,setname,check = false){
-    if(check == true && config.AutoDetectRST == true){
-        // 执行 HTTP(S) RST检测
+/**
+ * 进行可选的 HTTP(S) RST 检测并添加被干扰的记录到 IPSet
+ * @param {string} ip 要添加/检测的 IP
+ * @param {string} host RST 检测时请求的 Hostname
+ * @param {boolean} check 是否进行 RST 检测
+ */
+async function AddIPSet(ip, host, check = false) {
+    if (check && config.AutoDetectRST) {
         console.log(`Performing HTTP(S) RST Check for ${host} on ${ip}`);
-        timeStart = new Date().getTime();
-        if(await utils.RSTCheck(host,ip)){
-            execFile('/usr/sbin/ipset',['add',setname,ip],(err) => {
-                if(err){
-                    console.error(`An error occurred when adding ${ip} to the set ${setname}: ${err.message}`);
-                }else{
-                    console.log(`${ip} was added to the set ${setname}`)
-                }
-            })
-        }else{
-            console.log(`${host} on ${ip} RST Check passed (responsed in ${(new Date().getTime() - timeStart)}ms)`);
+        const timeStart = new Date();
+        if (!await utils.RSTCheck(host, ip)) {
+            console.log(`${host} on ${ip} RST Check passed (responsed in ${(new Date() - timeStart)}ms)`);
+            return;
         }
-    }else{
-        execFile('/usr/sbin/ipset',['add',setname,ip],(err) => {
-            if(err){
-                console.error(`An error occurred when adding ${ip} to the set ${setname}: ${err.message}`);
-            }else{
-                console.log(`${ip} was added to the set ${setname}`)
-            }
-        })
     }
-    
+    const setname = config.IpsetToAdd;
+    if (!setname) {
+        return;
+    }
+    execFile('/usr/sbin/ipset', ['add', setname, ip], (err) => {
+        if (err) {
+            console.error(`An error occurred when adding ${ip} to the set ${setname}: ${err.message}`);
+        } else {
+            console.log(`${ip} was added to the set ${setname}`)
+        }
+    });
 }
 
 init();

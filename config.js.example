@@ -14,6 +14,6 @@ module.exports = {
     "CHNRoute": "ipdb/chnroute.txt", // IPIP.net 版本2020-01-16 github.com/17mon/china_ip_list
     "BlackList": "ipdb/gfwlist.txt", // fancyss 版本2019-02-05
     "WhiteList": "ipdb/chinalist.txt", // fancyss 版本2019-02-05
-    "IpsetToAdd": "gfwlist",
+    "IpsetToAdd": "gfwlist", // 被干扰 IP 添加到的 IPSet, false 则关闭此功能
     "AutoDetectRST": true // 对未知域名自动进行HTTP(S) RST检测，关闭就全部加IPSET
 }
