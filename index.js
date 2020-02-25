@@ -1,5 +1,13 @@
 const dns = require("dns2");
-const config = require("./config");
+let config;
+try {
+    config = require("./config");
+}
+catch
+{
+    console.error('未找到配置文件或配置有误, 请参考 config.js.example 创建一个可用的配置文件');
+    return;
+}
 const url = require("url");
 const utils = require("./utils")
 const nodetrustdns = require('dns');

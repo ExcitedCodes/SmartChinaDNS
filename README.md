@@ -12,16 +12,15 @@ SmartChinaDNS 将 GFWList 和 CHNRoute 的优点融合起来，为你提供正�
 
 ### 配置
 
-默认开箱即用，需要 Node.js ≥ 12
+需要 Node.js ≥ 12
 
+```console
+$ cp config.js.example config.js
+$ npm install
+$ node index
 ```
-npm install
-node index
-```
 
-就可以了
-
-如需更改配置，`config.js` 中有详细的注释。
+通常 `config.js.example` 里面的配置是开箱即用的, 不需要做其他修改.
 
 ### 注意
 
