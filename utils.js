@@ -232,7 +232,7 @@ class DomainMatcher {
         this.DomainList = {};
     }
 
-    LoadFromFile = (file) => new Promise((resolve, _reject) => {
+    LoadFromFile(file) {
         const onLine = (line, _counter) => {
             line = line.toLowerCase().split('.');
             let root = this.DomainList;
@@ -251,8 +251,8 @@ class DomainMatcher {
             resolve();
             console.log(`Error occured while reading ${file}: ${e.message}`);
         };
-        readFile(file, onLine, resolve, onError);
-    });
+        return new Promise((resolve, _reject) => readFile(file, onLine, resolve, onError));
+    }
 
     contains(domain) {
         let root = this.DomainList;
