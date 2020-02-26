@@ -23,6 +23,36 @@ const TYPE_FIELD_MAP = {
 };
 
 /**
+ * 加载 DNS 服务器或对 DOH URL 进行预处理
+ * 
+ * 此函数将创建 config.DNS = require('dns')
+ * 
+ * @param {*} config 服务器配置对象
+ */
+function loadServer(config) {
+    if (config.Type == "dns") {
+        config.DNS = require('dns');
+        config.DNS.setServers([config.Addr]);
+    } else {
+        config.URL += config.URL.lastIndexOf('?') === -1 ? '?' : '&';
+    }
+}
+
+/**
+ * 创建 DNS 查询请求
+ * @param {*} server 服务器配置对象
+ * @param {int} timeout 查询超时
+ * @param {*} request DNS 请求包
+ */
+function createQuery(server, timeout, request) {
+    if (server.Type == 'dns') {
+        return DNSRequest(server.DNS, timeout, request);
+    } else {
+        return DoHRequest(server.URL, timeout, request);
+    }
+}
+
+/**
  * 将 DNS Packet 标记为返回数据包, 以便告知客户端 NO DATA
  * @param {*} packet 需要标记的数据包
  */
@@ -117,42 +147,50 @@ const DoHRequest = (url, timeout, packet) => new Promise((resolve, reject) => {
 /**
  * 进行 DNS 查询
  * @param {*} dnsobject dns 对象
+ * @param {int} timeout DNS 等待超时
  * @param {*} packet 查询包
  */
-const DNSRequest = (dnsobject, packet) => new Promise((resolve, reject) => {
-    for (const q of packet.questions) {
-        const type = getKeyByValue(dns.Packet.TYPE, q.type);
-        dnsobject.resolve(q.name, type, (err, records) => {
-            const response = emptyPacket(packet);
-            if (err) {
-                if (err.code == "ENODATA") {
-                    resolve(response);
-                } else {
-                    reject(`DNS Error ${err.code}`)
-                }
-                return;
+const DNSRequest = (dnsobject, timeout, packet) => new Promise((resolve, reject) => {
+    const q = packet.questions[0]; // 同样只支持单条记录的查询
+    const type = getKeyByValue(dns.Packet.TYPE, q.type);
+    dnsobject.resolve(q.name, type, (err, records) => {
+        if (timeoutWatcher === false) { // Timeout exceeded
+            return;
+        }
+        clearTimeout(timeoutWatcher);
+        const response = emptyPacket(packet);
+        if (err) {
+            if (err.code == "ENODATA") {
+                resolve(response);
+            } else {
+                reject(`DNS Error ${err.code}`);
             }
-            const key = TYPE_FIELD_MAP[q.type];
-            if (!key) {
-                reject(`Unimplemented Type: ${type}`);
-                return;
+            return;
+        }
+        const key = TYPE_FIELD_MAP[q.type];
+        if (!key) {
+            reject(`Unimplemented Type: ${type}`);
+            return;
+        }
+        for (const r of records) {
+            let row = {
+                name: q.name,
+                type: q.type,
+                class: 1
+            };
+            if (typeof (key) === 'string') {
+                row[key] = r;
+            } else {
+                key(r, row);
             }
-            for (const r of records) {
-                let row = {
-                    name: q.name,
-                    type: q.type,
-                    class: 1
-                };
-                if (typeof (key) === 'string') {
-                    row[key] = r;
-                } else {
-                    key(r, row);
-                }
-                response.answers.push(row);
-            }
-            resolve(response);
-        });
-    }
+            response.answers.push(row);
+        }
+        resolve(response);
+    });
+    let timeoutWatcher = setTimeout(() => {
+        timeoutWatcher = false;
+        reject(`DNS Timeout`);
+    }, timeout);
 });
 
 /**
@@ -194,23 +232,27 @@ class DomainMatcher {
         this.DomainList = {};
     }
 
-    LoadFromFile = (file) => new Promise((resolve, _reject) => readFile(file, (line, _counter) => {
-        line = line.toLowerCase().split('.');
-        let root = this.DomainList;
-        for (let i = line.length - 1; i >= 0; i--) {
-            if (root[line[i]] === undefined) {
-                root[line[i]] = i == 0 ? true : {};
+    LoadFromFile = (file) => new Promise((resolve, _reject) => {
+        const onLine = (line, _counter) => {
+            line = line.toLowerCase().split('.');
+            let root = this.DomainList;
+            for (let i = line.length - 1; i >= 0; i--) {
+                if (root[line[i]] === undefined) {
+                    root[line[i]] = i == 0 ? true : {};
+                }
+                root = root[line[i]];
+                if (root === true && i != 0) {
+                    // Already contained in a wider rule
+                    return;
+                }
             }
-            root = root[line[i]];
-            if (root === true && i != 0) {
-                // Already contained in a wider rule
-                return;
-            }
-        }
-    }, resolve, (e) => {
-        resolve();
-        console.log(`Error occured while reading ${file}: ${e.message}`);
-    }));
+        };
+        const onError = (e) => {
+            resolve();
+            console.log(`Error occured while reading ${file}: ${e.message}`);
+        };
+        readFile(file, onLine, resolve, onError);
+    });
 
     contains(domain) {
         let root = this.DomainList;
@@ -226,15 +268,10 @@ class DomainMatcher {
 }
 
 /**
- * @todo 独立Logger
- * 
- * @param {*} FinalAnswer 
- * @param {*} rinfo 
- * @param {*} comment 
+ * @todo 重构
  */
 function GenerateLog(FinalAnswer, rinfo, comment = "") {
-    FinalAnswer.sent = true;
-    for (q of FinalAnswer.answers) {
+    for (const q of FinalAnswer.answers) {
         let ansData;
         switch (q.type) {
             case 0x01:
@@ -259,11 +296,12 @@ function GenerateLog(FinalAnswer, rinfo, comment = "") {
             default:
                 ansData = "error";
         }
-        console.log(`Answered[${getKeyByValue(dns.Packet.TYPE, q.type)}] ${q.name} to ${rinfo.address}: ${ansData} ${comment} +${new Date().getTime() - rinfo.timeStart}ms`);
+        console.log(`Answered[${getKeyByValue(dns.Packet.TYPE, q.type)}] ${q.name} to ${rinfo.address}: ${ansData} ${comment} +${new Date() - rinfo.timeStart}ms`);
     }
     if (FinalAnswer.answers.length == 0) {
-        console.log(`Answered[${getKeyByValue(dns.Packet.TYPE, q.type)}] ${q.name} to ${rinfo.address}: NODATA ${comment} +${new Date().getTime() - rinfo.timeStart}ms`);
+        const q = FinalAnswer.questions[0];
+        console.log(`Answered[${getKeyByValue(dns.Packet.TYPE, q.type)}] ${q.name} to ${rinfo.address}: NODATA ${comment} +${new Date() - rinfo.timeStart}ms`);
     }
 }
 
-module.exports = { DoHRequest, getKeyByValue, DNSRequest, LoadIP, DomainMatcher, GenerateLog, emptyPacket, RSTCheck };
+module.exports = { DoHRequest, getKeyByValue, DNSRequest, LoadIP, DomainMatcher, GenerateLog, emptyPacket, RSTCheck, loadServer, createQuery };
