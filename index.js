@@ -36,7 +36,7 @@ async function init() {
 
     utils.loadServer(config.TrustDNS);
     utils.loadServer(config.ChinaDNS);
-
+ 
     console.log(`Configuration loaded in ${(new Date().getTime() - timeStart)}ms`);
 
     dns.createServer(handleQuery).listen({
@@ -96,6 +96,31 @@ async function handleQuery(request, send, rinfo) {
         send(utils.emptyPacket(request));
         utils.GenerateLog(request, rinfo);
         return;
+    }
+
+    
+    // IPv6 AAAA记录过滤，直接对请求返回空即可
+    if(request.questions[0].type == dns.Packet.TYPE.AAAA){
+        switch(config.FilterIPv6){
+            case 'all':
+                send(utils.emptyPacket(request));
+                utils.GenerateLog(request, rinfo, "(Blocked All AAAA Request)");
+                return;
+            case 'china':
+                if (!WhiteList.contains(request.questions[0].name)) {
+                    send(utils.emptyPacket(request));
+                    utils.GenerateLog(request, rinfo, "(Blocked Non-Chinese Domain AAAA Request)");
+                    return;
+                }
+                break;
+            case 'foreign':
+                if (WhiteList.contains(request.questions[0].name)) {
+                    send(utils.emptyPacket(request));
+                    utils.GenerateLog(request, rinfo, "(Blocked Chinese Domain AAAA Request)");
+                    return;
+                }
+                break;
+        }
     }
 
     // 虽然上面for了，但是其实我搜索了一下没有人会在一个DNS包里带俩questions

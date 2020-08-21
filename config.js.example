@@ -8,12 +8,17 @@ module.exports = {
     }, // 可能被污染的DNS服务器
     "TrustDNS": {
         Type: "doh",
-        URL: "https://1.1.1.1/dns-query"
+        URL: "https://162.159.132.53/dns-query"
     }, // 可信的 DNS 服务器
     "CDNIPRange": "ipdb/cdnip.txt", // 自整理 版本2020-02-22
     "CHNRoute": "ipdb/chnroute.txt", // IPIP.net 版本2020-01-16 github.com/17mon/china_ip_list
     "BlackList": "ipdb/gfwlist.txt", // fancyss 版本2019-02-05
     "WhiteList": "ipdb/chinalist.txt", // fancyss 版本2019-02-05
     "IpsetToAdd": "gfwlist", // 被干扰 IP 添加到的 IPSet, false 则关闭此功能
+    "FilterIPv6": "none", // 过滤IPv6 AAAA记录，可选模式：
+    // "china" - 仅保留国内域名的AAAA记录
+    // "foreign" - 抛弃国内域名的AAAA记录
+    // "all" - 抛弃所有AAAA记录
+    // "none" - 保留所有AAAA记录
     "AutoDetectRST": true // 对未知域名自动进行HTTP(S) RST检测，关闭就全部加IPSET
 }
