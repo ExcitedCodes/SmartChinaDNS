@@ -1,7 +1,7 @@
 module.exports = {
     "Listen": "dns://0.0.0.0:53", // 本地DNS服务器监听地址
     "Exclusive": true, // 是否独占端口
-    "Timeout": 1000, // 查询时限
+    "Timeout": 5000, // 查询时限
     "ChinaDNS": {
         Type: "dns",
         Addr: "223.5.5.5:53"

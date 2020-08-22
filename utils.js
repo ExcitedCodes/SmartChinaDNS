@@ -1,10 +1,12 @@
 const fs = require('fs');
 const dns = require("dns2");
+const udp = require('dgram');
 const http = require("http");
 const https = require("https");
 const agent = new https.Agent({ keepAlive: true });
 const readline = require('readline');
 const base64url = require("base64url");
+const { equal } = require('assert');
 
 /**
  * 记录类型到 DNS 返回包字段的映射, 用于 DNSRequest
@@ -15,6 +17,7 @@ const TYPE_FIELD_MAP = {
     0x05: 'domain', // CNAME
     0x06: 'domain', // SOA
     0x10: 'data', // TXT
+    0x0C: 'domain', // PTR
     0x0F: (r, row) => {
         row.exchange = r.exchange;
         row.priority = r.priority;
@@ -23,16 +26,16 @@ const TYPE_FIELD_MAP = {
 };
 
 /**
- * 加载 DNS 服务器或对 DOH URL 进行预处理
- * 
- * 此函数将创建 config.DNS = require('dns')
+ * 对 DoH URL 进行预处理
  * 
  * @param {*} config 服务器配置对象
  */
 function loadServer(config) {
     if (config.Type == "dns") {
-        config.DNS = require('dns');
-        config.DNS.setServers([config.Addr]);
+        config.DNS = {
+            IP: config.Addr.split(':')[0],
+            Port: config.Addr.split(':')[1]
+        }
     } else {
         config.URL += config.URL.lastIndexOf('?') === -1 ? '?' : '&';
     }
@@ -146,48 +149,24 @@ const DoHRequest = (url, timeout, packet) => new Promise((resolve, reject) => {
 
 /**
  * 进行 DNS 查询
- * @param {*} dnsobject dns 对象
+ * @param {*} ServerInfo DNS 服务器参数
  * @param {int} timeout DNS 等待超时
  * @param {*} packet 查询包
  */
-const DNSRequest = (dnsobject, timeout, packet) => new Promise((resolve, reject) => {
-    const q = packet.questions[0]; // 同样只支持单条记录的查询
-    const type = getKeyByValue(dns.Packet.TYPE, q.type);
-    dnsobject.resolve(q.name, type, (err, records) => {
-        if (timeoutWatcher === false) { // Timeout exceeded
-            return;
-        }
+const DNSRequest = (ServerInfo, timeout, packet) => new Promise((resolve, reject) => {
+    const client = new udp.Socket('udp4');
+    client.once('message', function onMessage(message) {
+        client.close();
         clearTimeout(timeoutWatcher);
-        const response = emptyPacket(packet);
-        if (err) {
-            if (err.code == "ENODATA") {
-                resolve(response);
-            } else {
-                reject(`DNS Error ${err.code}`);
-            }
-            return;
-        }
-        const key = TYPE_FIELD_MAP[q.type];
-        if (!key) {
-            reject(`Unimplemented Type: ${type}`);
-            return;
-        }
-        for (const r of records) {
-            //恢复完整IPv6地址，不然DNS库编码会出错
-            r2 = (r.indexOf(':') !== -1) ? expandIPv6Address(r) : r;
-            let row = {
-                name: q.name,
-                type: q.type,
-                class: 1
-            };
-            if (typeof (key) === 'string') {
-                row[key] = r2;
-            } else {
-                key(r2, row);
-            }
-            response.answers.push(row);
-        }
+        const response = dns.Packet.parse(message);
+        equal(response.header.id, packet.header.id);
         resolve(response);
+    });
+    client.send(packet.toBuffer(), ServerInfo.Port, ServerInfo.IP, err => {
+        if (err) {
+            clearTimeout(timeoutWatcher);
+            reject(err);
+        }
     });
     let timeoutWatcher = setTimeout(() => {
         timeoutWatcher = false;
@@ -289,6 +268,9 @@ function GenerateLog(FinalAnswer, rinfo, comment = "") {
             case 0x06:
                 ansData = `primary ${q.primary} admin ${q.admin}`;
                 break;
+            case 0x0C:
+                ansData = q.domain;
+                break;
             case 0x0F:
                 ansData = q.exchange;
                 break;
@@ -309,8 +291,7 @@ function GenerateLog(FinalAnswer, rinfo, comment = "") {
 // 还原缩写的IPv6地址
 // by Christopher Miller
 // http://forrst.com/posts/JS_Expand_Abbreviated_IPv6_Addresses-1OR
-function expandIPv6Address(address)
-{
+function expandIPv6Address(address) {
     var fullAddress = "";
     var expandedAddress = "";
     var validGroupCount = 8;
@@ -321,43 +302,37 @@ function expandIPv6Address(address)
     var validateIpv4 = /((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})/;
 
     // look for embedded ipv4
-    if(validateIpv4.test(address))
-    {
+    if (validateIpv4.test(address)) {
         groups = address.match(extractIpv4);
-        for(var i=1; i<groups.length; i++)
-        {
-            ipv4 += ("00" + (parseInt(groups[i], 10).toString(16)) ).slice(-2) + ( i==2 ? ":" : "" );
+        for (var i = 1; i < groups.length; i++) {
+            ipv4 += ("00" + (parseInt(groups[i], 10).toString(16))).slice(-2) + (i == 2 ? ":" : "");
         }
         address = address.replace(extractIpv4, ipv4);
     }
 
-    if(address.indexOf("::") == -1) // All eight groups are present.
+    if (address.indexOf("::") == -1) // All eight groups are present.
         fullAddress = address;
     else // Consecutive groups of zeroes have been collapsed with "::".
     {
         var sides = address.split("::");
         var groupsPresent = 0;
-        for(var i=0; i<sides.length; i++)
-        {
+        for (var i = 0; i < sides.length; i++) {
             groupsPresent += sides[i].split(":").length;
         }
         fullAddress += sides[0] + ":";
-        for(var i=0; i<validGroupCount-groupsPresent; i++)
-        {
+        for (var i = 0; i < validGroupCount - groupsPresent; i++) {
             fullAddress += "0000:";
         }
         fullAddress += sides[1];
     }
     var groups = fullAddress.split(":");
-    for(var i=0; i<validGroupCount; i++)
-    {
-        while(groups[i].length < validGroupSize)
-        {
+    for (var i = 0; i < validGroupCount; i++) {
+        while (groups[i].length < validGroupSize) {
             groups[i] = "0" + groups[i];
         }
-        expandedAddress += (i!=validGroupCount-1) ? groups[i] + ":" : groups[i];
+        expandedAddress += (i != validGroupCount - 1) ? groups[i] + ":" : groups[i];
     }
     return expandedAddress;
 }
 
-module.exports = { DoHRequest, getKeyByValue, DNSRequest, LoadIP, DomainMatcher, GenerateLog, emptyPacket, RSTCheck, loadServer, createQuery};
+module.exports = { DoHRequest, getKeyByValue, DNSRequest, LoadIP, DomainMatcher, GenerateLog, emptyPacket, RSTCheck, loadServer, createQuery };

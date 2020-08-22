@@ -36,7 +36,7 @@ async function init() {
 
     utils.loadServer(config.TrustDNS);
     utils.loadServer(config.ChinaDNS);
- 
+
     console.log(`Configuration loaded in ${(new Date().getTime() - timeStart)}ms`);
 
     dns.createServer(handleQuery).listen({
@@ -92,16 +92,18 @@ async function handleQuery(request, send, rinfo) {
         console.log(`Query[${utils.getKeyByValue(dns.Packet.TYPE, q.type)}] ${q.name} from ${rinfo.address}`);
     }
 
+    /*
     if (request.questions[0].type == dns.Packet.TYPE.PTR) {
         send(utils.emptyPacket(request));
         utils.GenerateLog(request, rinfo);
         return;
     }
+    */
 
-    
+
     // IPv6 AAAA记录过滤，直接对请求返回空即可
-    if(request.questions[0].type == dns.Packet.TYPE.AAAA){
-        switch(config.FilterIPv6){
+    if (request.questions[0].type == dns.Packet.TYPE.AAAA) {
+        switch (config.FilterIPv6) {
             case 'all':
                 send(utils.emptyPacket(request));
                 utils.GenerateLog(request, rinfo, "(Blocked All AAAA Request)");
@@ -321,7 +323,6 @@ async function addIPSet(ip, host, setname, check = false) {
 dns.Packet.TYPE.WTF = 0; //我也不知道这是什么
 dns.Packet.TYPE.OPT = 41;
 dns.Packet.Resource.OPT =
-    dns.Packet.Resource.PTR =
     dns.Packet.Resource.WTF = {
         decode: function () {
             return this;
